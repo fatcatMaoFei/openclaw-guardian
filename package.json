@@ -1,0 +1,9 @@
+{
+  "name": "openclaw-guardian",
+  "version": "0.1.0",
+  "description": "Tiered safety voting plugin for OpenClaw",
+  "main": "index.ts",
+  "type": "module",
+  "license": "MIT",
+  "dependencies": {}
+}

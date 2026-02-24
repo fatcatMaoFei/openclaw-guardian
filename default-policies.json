@@ -1,0 +1,90 @@
+{
+  "enabled": true,
+  "thresholds": { "low": 30, "high": 70 },
+  "guardianModel": "claude-haiku-4-5",
+  "policies": [
+    {
+      "tool": "exec",
+      "baseScore": 50,
+      "keywords": {
+        "rm -rf": 40,
+        "rm ": 30,
+        "sudo ": 25,
+        "kill ": 20,
+        "reboot": 30,
+        "shutdown": 30,
+        "mkfs": 40,
+        "dd if=": 35,
+        "> /dev/": 35,
+        "chmod 777": 20,
+        "curl | sh": 35,
+        "wget | sh": 35
+      }
+    },
+    {
+      "tool": "write",
+      "baseScore": 15,
+      "keywords": {
+        ".env": 45,
+        "passwd": 50,
+        ".ssh/": 50,
+        "id_rsa": 50,
+        "/etc/": 40,
+        "crontab": 35,
+        ".bashrc": 25,
+        ".profile": 25
+      }
+    },
+    {
+      "tool": "edit",
+      "baseScore": 12,
+      "keywords": {
+        ".env": 40,
+        "passwd": 45,
+        ".ssh/": 45,
+        "/etc/": 35,
+        "config": 15
+      }
+    },
+    {
+      "tool": "file_delete",
+      "baseScore": 40,
+      "keywords": {
+        ".env": 30,
+        ".ssh": 40,
+        "/etc/": 30,
+        "node_modules": -20
+      }
+    },
+    {
+      "tool": "message",
+      "baseScore": 20,
+      "keywords": {}
+    },
+    {
+      "tool": "read",
+      "baseScore": 5,
+      "keywords": {
+        ".env": 30,
+        "passwd": 30,
+        ".ssh/": 35,
+        "id_rsa": 40,
+        "secret": 20,
+        "token": 15
+      }
+    },
+    {
+      "tool": "web_fetch",
+      "baseScore": 5,
+      "keywords": {}
+    }
+  ],
+  "voting": {
+    "lightReview": { "guardians": 1, "threshold": 1 },
+    "fullVote": { "guardians": 3, "threshold": 2 }
+  },
+  "trustBudget": {
+    "enabled": true,
+    "autoDowngradeAfter": 10
+  }
+}

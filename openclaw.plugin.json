@@ -1,0 +1,26 @@
+{
+  "id": "openclaw-guardian",
+  "name": "OpenClaw Guardian",
+  "description": "Tiered safety voting plugin — intercepts tool calls, assesses risk, and routes high-risk operations through Guardian review.",
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": { "type": "boolean", "default": true },
+      "policyPath": {
+        "type": "string",
+        "description": "Path to custom policies JSON (defaults to bundled default-policies.json)"
+      },
+      "auditLogPath": {
+        "type": "string",
+        "description": "Path to audit log JSONL file"
+      }
+    }
+  },
+  "uiHints": {
+    "enabled": { "label": "Enable Guardian", "help": "Master switch for the safety gate" },
+    "policyPath": { "label": "Policy File", "help": "Custom policy JSON path (optional)" },
+    "auditLogPath": { "label": "Audit Log Path", "help": "Where to write the hash-chain audit log" }
+  }
+}
