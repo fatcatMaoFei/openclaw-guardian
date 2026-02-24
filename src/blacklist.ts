@@ -165,17 +165,17 @@ function splitCommand(cmd: string): string[] {
     if (ch === "'" && !inDouble) { inSingle = !inSingle; current += ch; continue; }
     if (ch === '"' && !inSingle) { inDouble = !inDouble; current += ch; continue; }
     if (!inSingle && !inDouble) {
-      if (ch === ';' || ch === '|') {
+      // Check double-char operators first: && and ||
+      if ((ch === '&' && cmd[i + 1] === '&') || (ch === '|' && cmd[i + 1] === '|')) {
         segments.push(current.trim());
         current = "";
-        // Skip && and ||
-        if ((ch === '&' || ch === '|') && cmd[i+1] === ch) i++;
+        i++; // skip second char
         continue;
       }
-      if (ch === '&' && cmd[i+1] === '&') {
+      // Single-char separators: ; | \n
+      if (ch === ';' || ch === '|' || ch === '\n') {
         segments.push(current.trim());
         current = "";
-        i++;
         continue;
       }
     }

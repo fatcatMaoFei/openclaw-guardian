@@ -6,8 +6,7 @@
  * No separate API key needed — uses whatever the user already configured.
  */
 
-import { execSync } from "node:child_process";
-import { readdirSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 export type Vote = { voter: number; confirmed: boolean; reason: string };
@@ -38,8 +37,8 @@ const PREFERRED_MODELS = [
  * Initialize LLM config from OpenClaw's provider config.
  * Called once at plugin setup.
  */
-export function initLlm(config: any): void {
-  const providers = config?.models?.providers;
+export function initLlm(config: Record<string, unknown>): void {
+  const providers = (config as Record<string, any>)?.models?.providers;
   if (!providers || typeof providers !== "object") {
     console.error("[guardian] No model providers found in config");
     return;
@@ -168,13 +167,11 @@ export function readRecentContext(_sessionKey?: string): string {
     if (files.length === 0) return "(no session context available)";
 
     const latest = join(sessDir, files[0].name);
-    const raw = execSync(`tail -50 "${latest}"`, {
-      encoding: "utf-8",
-      timeout: 1000,
-    });
+    const raw = readFileSync(latest, "utf-8");
+    const lines = raw.split("\n").slice(-50).join("\n");
 
     const userMessages: string[] = [];
-    for (const line of raw.split("\n")) {
+    for (const line of lines.split("\n")) {
       if (!line.trim()) continue;
       try {
         const entry = JSON.parse(line);

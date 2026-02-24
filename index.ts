@@ -46,7 +46,7 @@ export default function setup(api: OpenClawPluginApi): void {
   const log = api.logger;
   log.info("[guardian] v2 active — blacklist + LLM intent verification");
 
-  api.on("before_tool_call", async (event: any, ctx: any) => {
+  api.on("before_tool_call", async (event, ctx) => {
     const { toolName, params } = event;
 
     // Only check exec, write, edit — everything else passes instantly
