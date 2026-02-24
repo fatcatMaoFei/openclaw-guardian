@@ -37,6 +37,23 @@ const CRITICAL_EXEC: Rule[] = [
   { pattern: /\binit\s+[06]\b/, reason: "system halt/reboot (init)" },
   // Kill SSH (locks out remote access)
   { pattern: /systemctl\s+(?:stop|disable)\s+sshd/, reason: "disable SSH (remote lockout)" },
+  // === BYPASS PREVENTION ===
+  // Absolute path to rm
+  { pattern: /\/bin\/rm\s+(-[a-zA-Z]*r[a-zA-Z]*)\s+/, reason: "rm via absolute path" },
+  { pattern: /\/usr\/bin\/rm\s+(-[a-zA-Z]*r[a-zA-Z]*)\s+/, reason: "rm via absolute path" },
+  // eval with dangerous content
+  { pattern: /\beval\s+/, reason: "eval execution (arbitrary code)" },
+  // Interpreter-based bypass
+  { pattern: /\bpython[23]?\s+(-c|--command)\s+/, reason: "python inline code execution" },
+  { pattern: /\bperl\s+(-e|--eval)\s+/, reason: "perl inline code execution" },
+  { pattern: /\bruby\s+(-e|--eval)\s+/, reason: "ruby inline code execution" },
+  { pattern: /\bnode\s+(-e|--eval)\s+/, reason: "node inline code execution" },
+  // xargs with dangerous commands
+  { pattern: /xargs\s+.*\brm\b/, reason: "xargs rm (indirect deletion)" },
+  { pattern: /xargs\s+.*\bchmod\b/, reason: "xargs chmod (indirect permission change)" },
+  // find -exec with dangerous commands
+  { pattern: /find\s+.*-exec\s+.*\brm\b/, reason: "find -exec rm (indirect deletion)" },
+  { pattern: /find\s+.*-delete\b/, reason: "find -delete (bulk deletion)" },
 ];
 
 const CRITICAL_PATH: Rule[] = [
@@ -49,20 +66,36 @@ const CRITICAL_PATH: Rule[] = [
 
 const WARNING_EXEC: Rule[] = [
   // Recursive delete (non-system paths — CRITICAL already catches system paths)
-  // Only match rm with BOTH -r (recursive) and force flags, not just -f alone
   { pattern: /rm\s+(-[a-zA-Z]*r[a-zA-Z]*)\s+/, reason: "recursive file deletion" },
   // Privilege escalation
   { pattern: /\bsudo\s+/, reason: "privilege escalation (sudo)" },
   // Dangerous permissions
   { pattern: /chmod\s+[47]77\b/, reason: "world-writable permission (chmod 777)" },
+  { pattern: /chmod\s+-R\s+/, reason: "recursive permission change" },
+  { pattern: /chown\s+-R\s+/, reason: "recursive ownership change" },
   // Force kill
   { pattern: /kill\s+-9\s+/, reason: "force kill process (SIGKILL)" },
   { pattern: /\bkillall\s+/, reason: "killall processes" },
+  { pattern: /\bpkill\s+/, reason: "pkill processes" },
   // Service management
   { pattern: /systemctl\s+(?:stop|disable|restart)\s+/, reason: "systemctl service operation" },
   // Database destruction
   { pattern: /DROP\s+(?:DATABASE|TABLE)\b/i, reason: "DROP DATABASE/TABLE" },
   { pattern: /TRUNCATE\s+/i, reason: "TRUNCATE table" },
+  // Network/firewall changes
+  { pattern: /\biptables\s+/, reason: "firewall rule change (iptables)" },
+  { pattern: /\bufw\s+(?:allow|deny|delete|disable)\b/, reason: "firewall rule change (ufw)" },
+  // Crontab modification
+  { pattern: /\bcrontab\s+(-r|-e)\b/, reason: "crontab modification" },
+  // Disk operations
+  { pattern: /\bfdisk\s+/, reason: "disk partition operation" },
+  { pattern: /\bparted\s+/, reason: "disk partition operation" },
+  { pattern: /\bmount\s+/, reason: "filesystem mount operation" },
+  { pattern: /\bumount\s+/, reason: "filesystem unmount operation" },
+  // SSH key operations
+  { pattern: /ssh-keygen\s+/, reason: "SSH key generation/modification" },
+  // Environment variable manipulation that could affect security
+  { pattern: /export\s+(?:PATH|LD_PRELOAD|LD_LIBRARY_PATH)=/, reason: "security-sensitive environment variable change" },
 ];
 
 const WARNING_PATH: Rule[] = [
@@ -77,10 +110,10 @@ const SAFE_EXEC: RegExp[] = [
   /^git\s+rm\s+.*--cached/,
   // git operations are generally safe
   /^git\s+(?:add|commit|push|pull|fetch|log|status|diff|branch|checkout|merge|rebase|stash|tag|remote|clone)\b/,
-  // echo/printf just prints text
+  // echo/printf — ONLY safe if not piped to shell (pipe splits into separate segments)
   /^(?:echo|printf)\s+/,
-  // read-only commands
-  /^(?:cat|head|tail|less|more|grep|find|ls|stat|file|wc|du|df|which|whereis|type|id|whoami|hostname|uname|date|uptime)\s*/,
+  // read-only commands — exclude find (can be used with -exec/-delete)
+  /^(?:cat|head|tail|less|more|grep|ls|stat|file|wc|du|df|which|whereis|type|id|whoami|hostname|uname|date|uptime)\s*/,
   // package info (not install)
   /^(?:apt|dpkg|pip|npm)\s+(?:list|show|info|search)\b/,
 ];
@@ -161,6 +194,22 @@ function splitCommand(cmd: string): string[] {
  */
 export function checkExecBlacklist(command: string): BlacklistMatch | null {
   if (!command) return null;
+
+  // Phase 1: Check the FULL command string for pipe-based attacks
+  // These patterns span across pipe boundaries and must be checked before splitting
+  const PIPE_ATTACKS: Rule[] = [
+    { pattern: /base64\s+(-d|--decode).*\|\s*(?:bash|sh|zsh|dash)/, reason: "base64 decoded pipe to shell" },
+    { pattern: /\bcurl\b.*\|\s*(?:bash|sh|zsh|dash|python|perl|ruby)/, reason: "curl pipe to shell (remote code execution)" },
+    { pattern: /\bwget\b.*\|\s*(?:bash|sh|zsh|dash|python|perl|ruby)/, reason: "wget pipe to shell (remote code execution)" },
+    { pattern: /\becho\b.*\|\s*(?:bash|sh|zsh|dash)\b/, reason: "echo pipe to shell" },
+    { pattern: /\bprintf\b.*\|\s*(?:bash|sh|zsh|dash)\b/, reason: "printf pipe to shell" },
+    { pattern: /\|\s*(?:bash|sh|zsh|dash)\s*$/, reason: "pipe to shell interpreter" },
+    { pattern: /\|\s*(?:bash|sh|zsh|dash)\s*[;&|]/, reason: "pipe to shell interpreter" },
+  ];
+  const fullMatch = matchRules(command, PIPE_ATTACKS, "critical");
+  if (fullMatch) return fullMatch;
+
+  // Phase 2: Split on shell operators and check each segment
   const segments = splitCommand(command);
   for (const seg of segments) {
     // Whitelist check: safe commands skip blacklist entirely
