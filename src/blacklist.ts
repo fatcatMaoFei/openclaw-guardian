@@ -23,9 +23,9 @@ interface Rule {
 // Needs 3/3 LLM votes confirming user intent to pass
 
 const CRITICAL_EXEC: Rule[] = [
-  // Filesystem destruction
-  { pattern: /rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+|--recursive\s+)\/(?!tmp\/|home\/clawdbot\/)/, reason: "rm -rf on root-level system path" },
-  { pattern: /rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+|--recursive\s+)~\//, reason: "rm -rf on home directory" },
+  // Filesystem destruction — only recursive rm on system paths
+  { pattern: /rm\s+(-[a-zA-Z]*r[a-zA-Z]*\s+|--recursive\s+)\/(?!tmp\/|home\/clawdbot\/)/, reason: "rm -rf on root-level system path" },
+  { pattern: /rm\s+(-[a-zA-Z]*r[a-zA-Z]*\s+|--recursive\s+)~\//, reason: "rm -rf on home directory" },
   { pattern: /mkfs\b/, reason: "filesystem format (mkfs)" },
   { pattern: /dd\s+if=.*of=\/dev\//, reason: "raw disk write (dd)" },
   { pattern: />\s*\/dev\/sd/, reason: "redirect to block device" },
@@ -49,7 +49,8 @@ const CRITICAL_PATH: Rule[] = [
 
 const WARNING_EXEC: Rule[] = [
   // Recursive delete (non-system paths — CRITICAL already catches system paths)
-  { pattern: /rm\s+(-[a-zA-Z]*f[a-zA-Z]*|--recursive)\s+/, reason: "recursive file deletion" },
+  // Only match rm with BOTH -r (recursive) and force flags, not just -f alone
+  { pattern: /rm\s+(-[a-zA-Z]*r[a-zA-Z]*)\s+/, reason: "recursive file deletion" },
   // Privilege escalation
   { pattern: /\bsudo\s+/, reason: "privilege escalation (sudo)" },
   // Dangerous permissions
@@ -67,6 +68,21 @@ const WARNING_EXEC: Rule[] = [
 const WARNING_PATH: Rule[] = [
   { pattern: /^\/etc\//, reason: "write to /etc/ system config" },
   { pattern: /^\/root\//, reason: "write to /root/ directory" },
+];
+
+// ── Safe Command Patterns (whitelist, checked before blacklist) ─────
+
+const SAFE_EXEC: RegExp[] = [
+  // git rm --cached only removes from index, not filesystem
+  /^git\s+rm\s+.*--cached/,
+  // git operations are generally safe
+  /^git\s+(?:add|commit|push|pull|fetch|log|status|diff|branch|checkout|merge|rebase|stash|tag|remote|clone)\b/,
+  // echo/printf just prints text
+  /^(?:echo|printf)\s+/,
+  // read-only commands
+  /^(?:cat|head|tail|less|more|grep|find|ls|stat|file|wc|du|df|which|whereis|type|id|whoami|hostname|uname|date|uptime)\s*/,
+  // package info (not install)
+  /^(?:apt|dpkg|pip|npm)\s+(?:list|show|info|search)\b/,
 ];
 
 // ── Quote/Comment Detection ────────────────────────────────────────
@@ -147,6 +163,9 @@ export function checkExecBlacklist(command: string): BlacklistMatch | null {
   if (!command) return null;
   const segments = splitCommand(command);
   for (const seg of segments) {
+    // Whitelist check: safe commands skip blacklist entirely
+    if (SAFE_EXEC.some(re => re.test(seg))) continue;
+
     const m = matchRules(seg, CRITICAL_EXEC, "critical")
       ?? matchRules(seg, WARNING_EXEC, "warning");
     if (m) return m;
