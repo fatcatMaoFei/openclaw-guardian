@@ -84,7 +84,7 @@
   ],
   "voting": {
     "lightReview": { "guardians": 1, "threshold": 1 },
-    "fullVote": { "guardians": 3, "threshold": 2 }
+    "fullVote": { "guardians": 4, "threshold": 3 }
   },
   "trustBudget": {
     "enabled": true,
