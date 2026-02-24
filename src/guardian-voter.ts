@@ -43,7 +43,7 @@ const GUARDIANS: GuardianSpec[] = [
       /rm\s+(-rf?|--recursive)\s+[\/~]/i,
       /mkfs\b/i,
       /dd\s+if=/i,
-      />\s*\/dev\//i,
+      />\s*\/dev\/sd/i,
       /shutdown|reboot|init\s+[06]/i,
       /kill\s+-9\s+1\b/i,
       /systemctl\s+(stop|disable)\s+(sshd|network|docker)/i,
@@ -79,7 +79,7 @@ const GUARDIANS: GuardianSpec[] = [
       /rm\s+(-rf?|--recursive)/i,
       /DROP\s+(TABLE|DATABASE)/i,
       /TRUNCATE\s+/i,
-      />\s+[^\s|]/i, // overwrite redirect
+      />\s+\/(etc|root|home)\//i, // overwrite redirect to sensitive paths
       /format\s+/i,
     ],
   },

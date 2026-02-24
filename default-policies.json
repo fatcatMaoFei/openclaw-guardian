@@ -5,20 +5,23 @@
   "policies": [
     {
       "tool": "exec",
-      "baseScore": 50,
+      "baseScore": 30,
       "keywords": {
-        "rm -rf": 40,
-        "rm ": 30,
-        "sudo ": 25,
-        "kill ": 20,
-        "reboot": 30,
-        "shutdown": 30,
-        "mkfs": 40,
-        "dd if=": 35,
-        "> /dev/": 35,
-        "chmod 777": 20,
-        "curl | sh": 35,
-        "wget | sh": 35
+        "rm -rf": 50,
+        "rm -r ": 40,
+        "sudo ": 30,
+        "kill -9": 25,
+        "reboot": 40,
+        "shutdown": 40,
+        "mkfs": 50,
+        "dd if=": 40,
+        "> /dev/sd": 45,
+        "> /dev/null": -10,
+        "chmod 777": 25,
+        "curl | sh": 40,
+        "wget | sh": 40,
+        "curl | bash": 40,
+        "wget | bash": 40
       }
     },
     {
