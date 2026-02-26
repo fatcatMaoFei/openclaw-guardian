@@ -54,7 +54,6 @@ AI Agent wants to run a tool (e.g., exec "rm -rf /tmp/data")
 | Write to `/etc/passwd`, `/etc/shadow`, `/etc/sudoers` | System auth compromise |
 | `shutdown`, `reboot` | System availability |
 | `curl \| bash`, `base64 -d \| sh` | Remote code execution |
-| `eval`, `python -c`, `node -e` | Arbitrary code execution bypass |
 | `xargs rm`, `find -delete` | Indirect bulk deletion |
 
 **Warning** (risky but possibly intentional — needs 1/1 LLM confirmation):
@@ -66,6 +65,7 @@ AI Agent wants to run a tool (e.g., exec "rm -rf /tmp/data")
 | `chmod 777`, `chmod -R`, `chown -R` | Dangerous permissions |
 | `kill -9`, `killall`, `pkill` | Force kill processes |
 | `systemctl stop/disable` | Service disruption |
+| `eval`, `python -c`, `node -e`, `perl -e`, `ruby -e` | Arbitrary code execution (review before running) |
 | Write to `.env`, `.ssh/`, `openclaw.json` | Sensitive file modification |
 
 ### LLM Intent Verification
@@ -75,6 +75,19 @@ When a blacklist rule matches, Guardian doesn't just block — it reads the rece
 - Uses the cheapest/fastest model available from your existing OpenClaw config (prefers Haiku, GPT-4o-mini, Gemini Flash)
 - No separate API key needed — piggybacks on whatever you already have configured
 - If LLM is unavailable: critical → block (fail-safe), warning → ask user
+
+### Whitelist (Always Allowed)
+
+These commands are considered safe and will never be flagged, even if they appear inside a broader command:
+
+| Pattern | Why |
+|---------|-----|
+| `mkdir` | Creating directories is non-destructive |
+| `touch` | Creating empty files is non-destructive |
+| `tar`, `unzip`, `gzip`, `gunzip`, `bzip2`, `xz` | Archive extraction/compression — normal dev workflow |
+| `openclaw` (CLI) | OpenClaw's own CLI commands (e.g., `openclaw gateway status`) |
+
+Whitelist rules are checked **before** the blacklist. If a command matches a whitelist pattern, it passes through immediately with zero overhead.
 
 ### Why Not Just Use LLMs for Everything?
 
