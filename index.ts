@@ -21,7 +21,7 @@ function canonicalizePath(raw: string): string {
   // Resolve to absolute + normalize (removes ../ etc)
   return normalize(resolve(raw));
 }
-import { checkExecBlacklist, checkPathBlacklist } from "./src/blacklist.js";
+import { checkExecBlacklist, checkPathBlacklist, checkToolBlacklist } from "./src/blacklist.js";
 import { initLlm, singleVote, multiVote } from "./src/llm-voter.js";
 import { initAuditLog, writeAuditEntry } from "./src/audit-log.js";
 
@@ -58,6 +58,11 @@ export default function setup(api: OpenClawPluginApi): void {
       const rawPath = (params?.file_path ?? params?.path ?? "") as string;
       const safePath = canonicalizePath(rawPath);
       match = checkPathBlacklist(safePath);
+    }
+
+    if (!match) {
+      // Check tool-level blacklist (covers all other tools like email, message, etc.)
+      match = checkToolBlacklist(toolName, (params ?? {}) as Record<string, unknown>);
     }
 
     if (!match) return; // 99% of calls end here

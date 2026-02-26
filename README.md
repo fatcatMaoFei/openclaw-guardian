@@ -65,7 +65,7 @@ AI Agent wants to run a tool (e.g., exec "rm -rf /tmp/data")
 | `chmod 777`, `chmod -R`, `chown -R` | Dangerous permissions |
 | `kill -9`, `killall`, `pkill` | Force kill processes |
 | `systemctl stop/disable` | Service disruption |
-| `eval`, `python -c`, `node -e`, `perl -e`, `ruby -e` | Arbitrary code execution (review before running) |
+| `eval` | Arbitrary code execution (review before running) |
 | Write to `.env`, `.ssh/`, `openclaw.json` | Sensitive file modification |
 
 ### LLM Intent Verification
@@ -88,6 +88,25 @@ These commands are considered safe and will never be flagged, even if they appea
 | `openclaw` (CLI) | OpenClaw's own CLI commands (e.g., `openclaw gateway status`) |
 
 Whitelist rules are checked **before** the blacklist. If a command matches a whitelist pattern, it passes through immediately with zero overhead.
+
+### Tool-Level Blacklist
+
+Guardian doesn't just inspect `exec`, `write`, and `edit` — it also scans tool calls for **any** tool (e.g., `message`, `browser`, database clients, email plugins). To avoid false positives on normal payloads, it only checks action-oriented fields: `action`, `method`, `command`, and `operation` — not the entire parameter object.
+
+**Critical** (3/3 unanimous LLM confirmation):
+
+| Pattern | Why |
+|---------|-----|
+| `batchDelete`, `expunge`, `emptyTrash`, `purge` | Bulk email deletion — irreversible mailbox destruction |
+| `DROP DATABASE`, `DROP TABLE`, `TRUNCATE`, `DELETE FROM` | Database destruction — irreversible data loss |
+
+**Warning** (1/1 LLM confirmation):
+
+| Pattern | Why |
+|---------|-----|
+| `delete`, `trash` | Single-item deletion — usually intentional but worth confirming |
+
+Everyday operations like `send`, `get`, `web_fetch`, `cron`, `snapshot`, etc. are completely unaffected — they never match any blacklist pattern.
 
 ### Why Not Just Use LLMs for Everything?
 

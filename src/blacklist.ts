@@ -41,13 +41,7 @@ const CRITICAL_EXEC: Rule[] = [
   // Absolute path to rm
   { pattern: /\/bin\/rm\s+(-[a-zA-Z]*r[a-zA-Z]*)\s+/, reason: "rm via absolute path" },
   { pattern: /\/usr\/bin\/rm\s+(-[a-zA-Z]*r[a-zA-Z]*)\s+/, reason: "rm via absolute path" },
-  // eval with dangerous content
-  { pattern: /\beval\s+/, reason: "eval execution (arbitrary code)" },
-  // Interpreter-based bypass
-  { pattern: /\bpython[23]?\s+(-c|--command)\s+/, reason: "python inline code execution" },
-  { pattern: /\bperl\s+(-e|--eval)\s+/, reason: "perl inline code execution" },
-  { pattern: /\bruby\s+(-e|--eval)\s+/, reason: "ruby inline code execution" },
-  { pattern: /\bnode\s+(-e|--eval)\s+/, reason: "node inline code execution" },
+  // (eval, perl -e, ruby -e moved to WARNING)
   // xargs with dangerous commands
   { pattern: /xargs\s+.*\brm\b/, reason: "xargs rm (indirect deletion)" },
   { pattern: /xargs\s+.*\bchmod\b/, reason: "xargs chmod (indirect permission change)" },
@@ -77,11 +71,13 @@ const WARNING_EXEC: Rule[] = [
   { pattern: /kill\s+-9\s+/, reason: "force kill process (SIGKILL)" },
   { pattern: /\bkillall\s+/, reason: "killall processes" },
   { pattern: /\bpkill\s+/, reason: "pkill processes" },
-  // Service management
-  { pattern: /systemctl\s+(?:stop|disable|restart)\s+/, reason: "systemctl service operation" },
+  // Service management (only stop/disable — restart is less dangerous)
+  { pattern: /systemctl\s+(?:stop|disable)\s+/, reason: "systemctl stop/disable service" },
   // Database destruction
   { pattern: /DROP\s+(?:DATABASE|TABLE)\b/i, reason: "DROP DATABASE/TABLE" },
   { pattern: /TRUNCATE\s+/i, reason: "TRUNCATE table" },
+  // Interpreter inline execution (only check eval — python/node/perl/ruby are normal dev tools)
+  { pattern: /\beval\s+/, reason: "eval execution (arbitrary code)" },
   // Network/firewall changes
   { pattern: /\biptables\s+/, reason: "firewall rule change (iptables)" },
   { pattern: /\bufw\s+(?:allow|deny|delete|disable)\b/, reason: "firewall rule change (ufw)" },
@@ -116,6 +112,12 @@ const SAFE_EXEC: RegExp[] = [
   /^(?:cat|head|tail|less|more|grep|ls|stat|file|wc|du|df|which|whereis|type|id|whoami|hostname|uname|date|uptime)\s*/,
   // package info (not install)
   /^(?:apt|dpkg|pip|npm)\s+(?:list|show|info|search)\b/,
+  // safe file operations (create only, no overwrite risk)
+  /^(?:mkdir|touch)\s+/,
+  // archive/compression (read-heavy, low risk)
+  /^(?:tar|unzip|gzip|gunzip|bzip2|xz|7z)\s+/,
+  // openclaw CLI
+  /^openclaw\s+/,
 ];
 
 // ── Quote/Comment Detection ────────────────────────────────────────
@@ -230,4 +232,50 @@ export function checkPathBlacklist(filePath: string): BlacklistMatch | null {
   if (!filePath) return null;
   return matchRules(filePath, CRITICAL_PATH, "critical")
     ?? matchRules(filePath, WARNING_PATH, "warning");
+}
+
+// ── Tool-level blacklist (catches dangerous actions regardless of implementation) ──
+
+interface ToolRule {
+  tool: RegExp;
+  param: string;
+  pattern: RegExp;
+  level: "critical" | "warning";
+  reason: string;
+}
+
+const TOOL_RULES: ToolRule[] = [
+  // Email: bulk delete / trash / expunge (irreversible)
+  { tool: /.*/, param: "*", pattern: /\b(?:batchDelete|expunge|emptyTrash|purge)\b/i, level: "critical", reason: "bulk email deletion (irreversible)" },
+  // Email: single delete/trash (only matches action field value)
+  { tool: /.*/, param: "*", pattern: /\b(?:delete|trash)\b/i, level: "warning", reason: "email/message deletion" },
+  // Destructive database queries embedded in tool params
+  { tool: /.*/, param: "*", pattern: /\b(?:DROP\s+(?:DATABASE|TABLE)|TRUNCATE\s+|DELETE\s+FROM)\b/i, level: "critical", reason: "destructive database query in tool params" },
+];
+
+/**
+ * Check any tool call's params against tool-level blacklist.
+ * Only checks specific param fields (not full serialization) to avoid false positives.
+ * Skips exec/write/edit (already handled by dedicated checkers).
+ * Returns null if no match.
+ */
+export function checkToolBlacklist(toolName: string, params: Record<string, unknown>): BlacklistMatch | null {
+  // exec/write/edit already have dedicated checkers
+  if (toolName === "exec" || toolName === "write" || toolName === "edit") return null;
+  if (!params || Object.keys(params).length === 0) return null;
+
+  // Only check action-like fields for all rules
+  const actionFields = ["action", "method", "command", "operation"];
+  const actionValue = actionFields
+    .map(f => typeof params[f] === "string" ? params[f] as string : "")
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  for (const rule of TOOL_RULES) {
+    if (!rule.tool.test(toolName)) continue;
+    const m = rule.pattern.exec(actionValue);
+    if (m) return { level: rule.level, pattern: rule.pattern.source, reason: rule.reason };
+  }
+  return null;
 }
