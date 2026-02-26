@@ -108,6 +108,22 @@ Guardian doesn't just inspect `exec`, `write`, and `edit` — it also scans tool
 
 Everyday operations like `send`, `get`, `web_fetch`, `cron`, `snapshot`, etc. are completely unaffected — they never match any blacklist pattern.
 
+### Dual Protection Protocol (双重防护)
+
+Guardian provides two layers of protection that work together:
+
+**Layer 1 — Guardian Plugin (automatic):** Regex pattern matching + LLM intent verification. When a dangerous operation is detected, Guardian blocks the tool call and returns a rejection message to the agent.
+
+**Layer 2 — Agent Self-Discipline (behavioral):** When an agent receives a Guardian block notification, it **must immediately stop**, report the blocked command and reason to the human user, and **wait for explicit confirmation** before proceeding. The agent must not attempt to bypass, retry, or find alternative ways to execute the blocked operation.
+
+**The protection chain:**
+
+```
+Tool call → Regex match → Guardian blocks → Agent stops → Reports to human → Human decides → Continue or abort
+```
+
+This dual approach ensures that even if an agent is determined to perform a dangerous action, it cannot silently retry or work around the block. The human always stays in the loop for any operation Guardian considers risky.
+
 ### Why Not Just Use LLMs for Everything?
 
 Guardian's blacklist uses **zero-cost keyword rules** — no model calls for pattern matching. Regex like `rm -rf /` → critical, `sudo` → warning is instant and deterministic. LLM verification is only triggered for the ~1% of operations that actually hit the blacklist, and its only job is confirming user intent — not scoring risk.
