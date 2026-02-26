@@ -98,9 +98,6 @@ Add to your `openclaw.json`:
 {
   "plugins": {
     "load": {
-      "paths": ["./openclaw-guardian"]
-    },
-    "entries": {
       "openclaw-guardian": {
         "enabled": true
       }
@@ -109,13 +106,9 @@ Add to your `openclaw.json`:
 }
 ```
 
-### 3. Restart
+### 3. Done
 
-```bash
-openclaw gateway restart
-```
-
-That's it. Guardian is now active. No extra API keys, no config files to edit — it uses your existing model providers.
+Guardian activates on next OpenClaw restart. No extra API keys, no config files to edit — it uses your existing model providers.
 
 ## Bypass Prevention
 
