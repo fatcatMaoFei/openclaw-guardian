@@ -124,6 +124,19 @@ Tool call → Regex match → Guardian blocks → Agent stops → Reports to hum
 
 This dual approach ensures that even if an agent is determined to perform a dangerous action, it cannot silently retry or work around the block. The human always stays in the loop for any operation Guardian considers risky.
 
+#### Recommended AGENTS.md Rule
+
+To activate Layer 2, add this rule to your `AGENTS.md` (or equivalent agent instructions file):
+
+```markdown
+### Guardian 双重防护协议（硬规则）
+1. **第一层（Guardian 插件）**：regex 初筛 + LLM 意图确认，自动拦截危险操作
+2. **第二层（Agent 自觉）**：当 Guardian 拦截命令时，agent 收到拦截通知后**必须立刻停下**，向用户报告被拦截的命令和原因，等待确认后才能继续。禁止自行绕过、重试或换方式执行被拦截的操作。
+3. **防护链**：regex 初筛 → Guardian 拦截 → agent 停下 → 人类确认 → 继续/放弃
+```
+
+This ensures the agent treats Guardian blocks as hard stops rather than soft suggestions.
+
 ### Why Not Just Use LLMs for Everything?
 
 Guardian's blacklist uses **zero-cost keyword rules** — no model calls for pattern matching. Regex like `rm -rf /` → critical, `sudo` → warning is instant and deterministic. LLM verification is only triggered for the ~1% of operations that actually hit the blacklist, and its only job is confirming user intent — not scoring risk.
