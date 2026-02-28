@@ -1,0 +1,11 @@
+*.ts
+!dist/**/*.d.ts
+src/
+test/
+tsconfig.json
+node_modules/
+node_modules_bak/
+.git/
+.gitignore
+package-lock.json
+package-lock.json.bak
