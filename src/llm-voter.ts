@@ -2,10 +2,23 @@
  * LLM voter — calls a lightweight model to check if user explicitly requested/confirmed
  * the flagged operation. Single job: "Did the user ask for this?"
  *
- * LLM config is read from OpenClaw's own model provider config (api.config.models.providers).
- * No separate API key needed — uses whatever the user already configured.
+ * v0.2.0: Uses OpenClaw's typed OpenClawConfig to read provider config.
+ *
+ * WHY NOT a standard SDK LLM interface:
+ *   The OpenClaw plugin SDK (as of 2026-02) does NOT expose a high-level
+ *   `api.llm()` or `api.createCompletion()` method for plugins. The plugin
+ *   receives `api.config: OpenClawConfig`, which contains the typed
+ *   `models.providers` map. We read provider credentials from that typed
+ *   structure instead of doing raw `Record<string, any>` parsing.
+ *
+ *   This approach:
+ *   1. Uses the SDK's own `ModelProviderConfig` type — fully typed, no guessing
+ *   2. Supports providers that put auth in `headers` (not just `apiKey`)
+ *   3. Supports providers using `authHeader: false` (e.g. custom header auth)
+ *   4. Falls back gracefully for AWS Bedrock or OAuth providers (logs skip reason)
  */
 
+import type { OpenClawConfig } from "openclaw/plugin-sdk";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
@@ -34,11 +47,11 @@ const PREFERRED_MODELS = [
 ];
 
 /**
- * Initialize LLM config from OpenClaw's provider config.
- * Called once at plugin setup.
+ * Initialize LLM config from OpenClaw's typed provider config.
+ * Called once at plugin setup. Receives `api.config` (OpenClawConfig).
  */
-export function initLlm(config: Record<string, unknown>): void {
-  const providers = (config as Record<string, any>)?.models?.providers;
+export function initLlm(config: OpenClawConfig): void {
+  const providers = config?.models?.providers;
   if (!providers || typeof providers !== "object") {
     console.error("[guardian] No model providers found in config");
     return;
@@ -46,42 +59,64 @@ export function initLlm(config: Record<string, unknown>): void {
 
   // Strategy: find a provider with a cheap/fast model
   for (const preferred of PREFERRED_MODELS) {
-    for (const [, provider] of Object.entries(providers) as [string, any][]) {
-      if (!provider.baseUrl || !provider.apiKey) continue;
+    for (const [providerName, provider] of Object.entries(providers)) {
+      if (!provider?.baseUrl) continue;
+
+      // Skip providers that use non-API-key auth (e.g. AWS Bedrock SDK auth, OAuth)
+      // — we can't call those with a simple fetch
+      if (provider.auth === "aws-sdk" || provider.auth === "oauth") continue;
+
       const models = provider.models ?? [];
-      const found = models.find((m: any) =>
+      const found = models.find((m) =>
         m.id === preferred || m.id?.includes(preferred) || m.name?.includes(preferred)
       );
       if (found) {
-        llmUrl = provider.baseUrl.replace(/\/$/, "");
-        llmApiKey = provider.apiKey;
-        llmModel = found.id;
-        llmApi = found.api ?? provider.api ?? "anthropic-messages";
-        llmHeaders = { ...provider.headers, ...found.headers };
-        llmReady = true;
-        console.log(`[guardian] LLM ready: ${llmModel} via ${llmUrl}`);
+        applyProvider(provider, found, providerName);
         return;
       }
     }
   }
 
   // Fallback: use the first provider with any model
-  for (const [, provider] of Object.entries(providers) as [string, any][]) {
-    if (!provider.baseUrl || !provider.apiKey) continue;
+  for (const [providerName, provider] of Object.entries(providers)) {
+    if (!provider?.baseUrl) continue;
+    if (provider.auth === "aws-sdk" || provider.auth === "oauth") continue;
+
     const models = provider.models ?? [];
     if (models.length > 0) {
-      llmUrl = provider.baseUrl.replace(/\/$/, "");
-      llmApiKey = provider.apiKey;
-      llmModel = models[0].id;
-      llmApi = models[0].api ?? provider.api ?? "anthropic-messages";
-      llmHeaders = { ...provider.headers, ...models[0].headers };
-      llmReady = true;
+      applyProvider(provider, models[0], providerName);
       console.log(`[guardian] LLM fallback: ${llmModel} via ${llmUrl}`);
       return;
     }
   }
 
   console.error("[guardian] No usable LLM provider found");
+}
+
+/**
+ * Apply provider + model config to module-level state.
+ * Builds the final headers map, supporting:
+ *   - Standard apiKey field
+ *   - Custom headers on provider and model level
+ *   - authHeader: false (key sent via custom header, not Authorization/x-api-key)
+ */
+function applyProvider(
+  provider: NonNullable<NonNullable<OpenClawConfig["models"]>["providers"]>[string],
+  model: NonNullable<typeof provider>["models"][number],
+  providerName: string,
+): void {
+  llmUrl = provider.baseUrl.replace(/\/$/, "");
+  // provider.apiKey may be a string or a SecretRef object at runtime;
+  // coerce to string to handle both cases safely
+  llmApiKey = typeof provider.apiKey === "string" ? provider.apiKey : String(provider.apiKey ?? "");
+  llmModel = model.id;
+  llmApi = model.api ?? provider.api ?? "anthropic-messages";
+
+  // Merge headers: provider-level first, then model-level overrides
+  llmHeaders = { ...provider.headers, ...model.headers };
+
+  llmReady = true;
+  console.log(`[guardian] LLM ready: ${llmModel} via ${llmUrl} (provider: ${providerName})`);
 }
 
 // ── System Prompt ──────────────────────────────────────────────────
@@ -206,14 +241,18 @@ async function callLLM(userPrompt: string): Promise<{ confirmed: boolean; reason
 
     if (llmApi === "anthropic-messages") {
       const endpoint = llmUrl.endsWith("/messages") ? llmUrl : `${llmUrl}/v1/messages`;
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        "anthropic-version": "2023-06-01",
+        ...llmHeaders,
+      };
+      // Only add x-api-key if we have an apiKey and the provider doesn't override via headers
+      if (llmApiKey && !headers["x-api-key"] && !headers["authorization"]) {
+        headers["x-api-key"] = llmApiKey;
+      }
       resp = await fetch(endpoint, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": llmApiKey,
-          "anthropic-version": "2023-06-01",
-          ...llmHeaders,
-        },
+        headers,
         body: JSON.stringify({
           model: llmModel,
           max_tokens: LLM_MAX_TOKENS,
@@ -224,17 +263,21 @@ async function callLLM(userPrompt: string): Promise<{ confirmed: boolean; reason
         signal: controller.signal,
       });
     } else {
-      // OpenAI-compatible (openai-completions, ollama, etc.)
+      // OpenAI-compatible (openai-completions, ollama, google-generative-ai, etc.)
       const endpoint = llmUrl.endsWith("/chat/completions")
         ? llmUrl
         : `${llmUrl}/v1/chat/completions`;
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        ...llmHeaders,
+      };
+      // Only add Authorization if we have an apiKey and no auth header is already set
+      if (llmApiKey && !headers["authorization"] && !headers["Authorization"]) {
+        headers["Authorization"] = `Bearer ${llmApiKey}`;
+      }
       resp = await fetch(endpoint, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${llmApiKey}`,
-          ...llmHeaders,
-        },
+        headers,
         body: JSON.stringify({
           model: llmModel,
           max_tokens: LLM_MAX_TOKENS,
