@@ -1,7 +1,7 @@
 {
   "name": "openclaw-guardian",
-  "version": "0.2.0",
-  "description": "Security gate plugin for OpenClaw — two-tier blacklist (regex + LLM intent verification) prevents dangerous tool executions",
+  "version": "0.2.1",
+  "description": "Security gate plugin for OpenClaw \u2014 two-tier blacklist (regex + LLM intent verification) prevents dangerous tool executions",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

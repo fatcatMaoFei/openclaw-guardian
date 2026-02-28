@@ -7,7 +7,19 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "enabled": { "type": "boolean", "default": true }
+      "enabled": { "type": "boolean", "default": true },
+      "llm": {
+        "type": "object",
+        "description": "Override LLM config for Guardian's intent verification. If omitted, auto-detects from models.providers.",
+        "properties": {
+          "provider": { "type": "string", "description": "Provider ID from models.providers (e.g. 'custom-www-zhongzhuan-win')" },
+          "baseUrl": { "type": "string", "description": "Direct LLM base URL (e.g. 'https://api.openai.com')" },
+          "apiKey": { "type": "string", "description": "API key for direct URL mode" },
+          "model": { "type": "string", "description": "Model ID (e.g. 'gpt-4o-mini')" },
+          "api": { "type": "string", "enum": ["anthropic-messages", "openai-completions"], "default": "openai-completions" }
+        },
+        "additionalProperties": false
+      }
     }
   }
 }

@@ -42,7 +42,9 @@ export default function setup(api: OpenClawPluginApi): void {
   }
 
   initAuditLog();
-  initLlm(api.config);
+  // Pass plugin-specific config (from plugins.entries.openclaw-guardian in openclaw.json)
+  const pluginConfig = (api as any).pluginConfig ?? {};
+  initLlm(api.config, pluginConfig);
   const log = api.logger;
   log.info("[guardian] v2 active — blacklist + LLM intent verification");
 

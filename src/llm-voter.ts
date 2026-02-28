@@ -47,13 +47,58 @@ const PREFERRED_MODELS = [
 ];
 
 /**
- * Initialize LLM config from OpenClaw's typed provider config.
- * Called once at plugin setup. Receives `api.config` (OpenClawConfig).
+ * Guardian LLM config override from plugin config.
+ * Users can set this in openclaw.json under plugins.entries.openclaw-guardian.llm
  */
-export function initLlm(config: OpenClawConfig): void {
+interface GuardianLlmOverride {
+  provider?: string;   // Provider ID from models.providers
+  baseUrl?: string;    // Direct URL
+  apiKey?: string;     // Direct API key
+  model?: string;      // Model ID
+  api?: string;        // "anthropic-messages" | "openai-completions"
+}
+
+/**
+ * Initialize LLM config from OpenClaw's provider config.
+ * Supports three modes:
+ *   1. Direct override via pluginConfig.llm (baseUrl + apiKey + model)
+ *   2. Provider reference via pluginConfig.llm.provider (looks up models.providers)
+ *   3. Auto-detect from models.providers (find cheapest model)
+ */
+export function initLlm(config: OpenClawConfig, pluginConfig?: Record<string, unknown>): void {
+  const override = pluginConfig?.llm as GuardianLlmOverride | undefined;
+
+  // Mode 1: Direct override — user specified baseUrl + apiKey directly
+  if (override?.baseUrl) {
+    llmUrl = override.baseUrl.replace(/\/$/, "");
+    llmApiKey = override.apiKey ?? "";
+    llmModel = override.model ?? "gpt-4o-mini";
+    llmApi = override.api ?? "openai-completions";
+    llmReady = true;
+    console.log(`[guardian] LLM ready (direct config): ${llmModel} via ${llmUrl}`);
+    return;
+  }
+
   const providers = config?.models?.providers;
+
+  // Mode 2: Provider reference — user specified a provider ID
+  if (override?.provider && providers) {
+    const provider = providers[override.provider];
+    if (provider?.baseUrl) {
+      const models = provider.models ?? [];
+      const model = override.model
+        ? models.find((m) => m.id === override.model) ?? { id: override.model }
+        : models[0] ?? { id: "unknown" };
+      applyProvider(provider, model as any, override.provider);
+      if (override.api) llmApi = override.api;
+      return;
+    }
+    console.warn(`[guardian] Configured provider "${override.provider}" not found or has no baseUrl`);
+  }
+
+  // Mode 3: Auto-detect from models.providers
   if (!providers || typeof providers !== "object") {
-    console.error("[guardian] No model providers found in config");
+    console.error("[guardian] No model providers found in config. Hint: set plugins.entries.openclaw-guardian.llm in openclaw.json");
     return;
   }
 
@@ -61,9 +106,6 @@ export function initLlm(config: OpenClawConfig): void {
   for (const preferred of PREFERRED_MODELS) {
     for (const [providerName, provider] of Object.entries(providers)) {
       if (!provider?.baseUrl) continue;
-
-      // Skip providers that use non-API-key auth (e.g. AWS Bedrock SDK auth, OAuth)
-      // — we can't call those with a simple fetch
       if (provider.auth === "aws-sdk" || provider.auth === "oauth") continue;
 
       const models = provider.models ?? [];
@@ -90,7 +132,7 @@ export function initLlm(config: OpenClawConfig): void {
     }
   }
 
-  console.error("[guardian] No usable LLM provider found");
+  console.error("[guardian] No usable LLM provider found. Configure plugins.entries.openclaw-guardian.llm in openclaw.json");
 }
 
 /**
