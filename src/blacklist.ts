@@ -153,6 +153,20 @@ function matchRules(text: string, rules: Rule[], level: "critical" | "warning"):
   return null;
 }
 
+/**
+ * Like matchRules but skips quote/comment detection.
+ * Used for interpreter payloads where quotes are language syntax, not shell quoting.
+ */
+function matchRulesRaw(text: string, rules: Rule[], level: "critical" | "warning"): BlacklistMatch | null {
+  for (const rule of rules) {
+    const m = rule.pattern.exec(text);
+    if (m) {
+      return { level, pattern: rule.pattern.source, reason: rule.reason };
+    }
+  }
+  return null;
+}
+
 // ── Command Segmentation ───────────────────────────────────────────
 
 function splitCommand(cmd: string): string[] {
@@ -270,8 +284,9 @@ export function checkExecBlacklist(command: string): BlacklistMatch | null {
     const interpPayload = extractInterpreterPayload(seg);
     if (interpPayload) {
       // Check interpreter payload against exec blacklist patterns
-      const innerMatch = matchRules(interpPayload, CRITICAL_EXEC, "critical")
-        ?? matchRules(interpPayload, WARNING_EXEC, "warning");
+      // Use matchRulesRaw: quotes inside interpreter code are language syntax, not shell quoting
+      const innerMatch = matchRulesRaw(interpPayload, CRITICAL_EXEC, "critical")
+        ?? matchRulesRaw(interpPayload, WARNING_EXEC, "warning");
       if (innerMatch) {
         return {
           ...innerMatch,
