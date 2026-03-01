@@ -187,6 +187,44 @@ function splitCommand(cmd: string): string[] {
   return segments.filter(Boolean);
 }
 
+// ── Shell Wrapper Extraction ───────────────────────────────────────
+
+/**
+ * Extract payload from shell wrapper commands like:
+ *   bash -c "rm -rf /tmp/test"
+ *   sh -lc 'dangerous command'
+ *   bash -c 'cmd1 && cmd2'
+ * Returns the inner payload string, or null if not a wrapper.
+ */
+function extractShellWrapperPayload(command: string): string | null {
+  // Match: bash|sh|zsh|dash [-flags]c "payload" or 'payload'
+  const wrapperMatch = command.match(
+    /^\s*(?:\/(?:usr\/)?bin\/)?(?:bash|sh|zsh|dash)\s+(?:-[a-zA-Z]*c|-c)\s+(?:"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+))/
+  );
+  if (wrapperMatch) {
+    return wrapperMatch[1] ?? wrapperMatch[2] ?? wrapperMatch[3] ?? null;
+  }
+  return null;
+}
+
+/**
+ * Extract inline code from interpreter commands:
+ *   python -c "import os; os.system('rm -rf /')"
+ *   python3 -c "..."
+ *   node -e "..."
+ *   perl -e "..."
+ *   ruby -e "..."
+ */
+function extractInterpreterPayload(command: string): string | null {
+  const interpMatch = command.match(
+    /^\s*(?:python[23]?|node|perl|ruby)\s+(?:-[a-zA-Z]*[ce]|-[ce])\s+(?:"((?:[^"\\]|\\.)*)"|'([^']*)')/
+  );
+  if (interpMatch) {
+    return interpMatch[1] ?? interpMatch[2] ?? null;
+  }
+  return null;
+}
+
 // ── Public API ─────────────────────────────────────────────────────
 
 /**
@@ -211,8 +249,39 @@ export function checkExecBlacklist(command: string): BlacklistMatch | null {
   const fullMatch = matchRules(command, PIPE_ATTACKS, "critical");
   if (fullMatch) return fullMatch;
 
-  // Phase 2: Split on shell operators and check each segment
+  // Phase 2: Unwrap shell wrappers (bash -c, sh -lc, etc.)
+  // This prevents bypass via: bash -c "rm -rf /important"
   const segments = splitCommand(command);
+  for (const seg of segments) {
+    // Check for shell wrapper bypass
+    const shellPayload = extractShellWrapperPayload(seg);
+    if (shellPayload) {
+      // Recursively check the inner payload
+      const innerMatch = checkExecBlacklist(shellPayload);
+      if (innerMatch) {
+        return {
+          ...innerMatch,
+          reason: `${innerMatch.reason} (via shell wrapper: ${seg.slice(0, 40)}...)`,
+        };
+      }
+    }
+
+    // Check for interpreter inline code
+    const interpPayload = extractInterpreterPayload(seg);
+    if (interpPayload) {
+      // Check interpreter payload against exec blacklist patterns
+      const innerMatch = matchRules(interpPayload, CRITICAL_EXEC, "critical")
+        ?? matchRules(interpPayload, WARNING_EXEC, "warning");
+      if (innerMatch) {
+        return {
+          ...innerMatch,
+          reason: `${innerMatch.reason} (via interpreter inline code)`,
+        };
+      }
+    }
+  }
+
+  // Phase 3: Split on shell operators and check each segment
   for (const seg of segments) {
     // Whitelist check: safe commands skip blacklist entirely
     if (SAFE_EXEC.some(re => re.test(seg))) continue;
