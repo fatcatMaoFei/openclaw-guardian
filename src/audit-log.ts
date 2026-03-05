@@ -83,3 +83,22 @@ export function writeAuditEntry(
     console.error(`[guardian] audit write failed: ${err}`);
   }
 }
+
+export function writeProxyAuditEntry(
+  ip: string,
+  status: string,
+  reason: string
+): void {
+  const entry = {
+    timestamp: new Date().toISOString(),
+    event: "PROXY_CONNECTION",
+    ip,
+    status,
+    reason,
+  };
+  try {
+    appendFileSync(getLogPath(), JSON.stringify(entry) + "\n", "utf-8");
+  } catch (err) {
+    console.error(`[guardian] proxy audit write failed: ${err}`);
+  }
+}

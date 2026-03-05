@@ -10,6 +10,11 @@ The community has been vocal: *"security nightmare"*, *"what if the AI deletes m
 
 **openclaw-guardian** fills that gap. It sits between the AI's decision and the actual execution, using a two-tier blacklist to catch dangerous operations and LLM-based intent verification to confirm the user actually asked for them. Think of it as a security checkpoint that only stops you when you're carrying something dangerous — and even then, it just checks your ID before letting you through.
 
+> [!WARNING]
+> **本插件强制启用入口防护，所有客户端必须连接 `ws://localhost:18790?token=xxx`，否则无法使用 OpenClaw！**
+> 
+> 基于最新的安全考量（如防范网页/JS 恶意连接），现在必须通过带有 token 校验的代理网关访问。
+
 The key insight: **99% of what an AI agent does is harmless** (reading files, fetching URLs, writing notes). Only ~1% is potentially dangerous (deleting files, running destructive commands, accessing secrets). Guardian only intervenes on that 1%, so you get safety without sacrificing speed.
 
 ## How It Works
@@ -143,39 +148,37 @@ Guardian's blacklist uses **zero-cost keyword rules** — no model calls for pat
 
 ## Quick Start (One Command)
 
-### 1. Clone into your OpenClaw workspace
+### 1. Clone into your OpenClaw workspace & Install Dependencies
 
 ```bash
 cd ~/.openclaw/workspace
 git clone https://github.com/fatcatMaoFei/openclaw-guardian.git
+cd openclaw-guardian
+npm install
 ```
 
-### 2. Register the plugin
+### 2. Start Guardian Proxy
 
-Add to your `openclaw.json`:
-
-```json
-{
-  "plugins": {
-    "load": {
-      "paths": ["./openclaw-guardian"]
-    },
-    "entries": {
-      "openclaw-guardian": {
-        "enabled": true
-      }
-    }
-  }
-}
-```
-
-### 3. Restart
+Use `npm run start` to start the standalone proxy layer alongside your plugin:
 
 ```bash
-openclaw gateway restart
+npm run start
 ```
+*Observe the console output closely. It will generate a token for you.*
 
-That's it. Guardian is now active. Every tool call goes through blacklist checking automatically.
+### 3. Update Client Connections
+
+**All clients (Browsers, WebChats, Telegram webhooks, Slack apps) must now use the Guardian proxy port `18790` and supply the token.**
+
+Example WebChat or native app config:
+* Direct WebSocket: `ws://localhost:18790?token=YOUR_TOKEN`
+
+Example Telegram webhook:
+* Webhook URL: `http://localhost:18790/your-webhook-path?token=YOUR_TOKEN`
+
+> **Note:** Do NOT connect directly to the OpenClaw gateway port 18789 anymore. The goal of this plugin is to intercept and validate all entry traffic.
+
+That's it. Guardian is now active. Every connection goes through token validation, and every tool call goes through blacklist checking automatically.
 
 ## Customization
 

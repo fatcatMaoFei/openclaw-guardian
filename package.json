@@ -1,7 +1,7 @@
 {
   "name": "openclaw-guardian",
   "version": "0.3.1",
-  "description": "Security gate plugin for OpenClaw \u2014 two-tier blacklist (regex + LLM intent verification) prevents dangerous tool executions",
+  "description": "Security gate plugin for OpenClaw — two-tier blacklist (regex + LLM intent verification) prevents dangerous tool executions",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -19,6 +19,7 @@
     "LICENSE"
   ],
   "scripts": {
+    "start": "ts-node src/start.ts",
     "build": "tsc",
     "prepublishOnly": "npm run build"
   },
@@ -46,12 +47,19 @@
     "openclaw": ">=2026.1.26"
   },
   "devDependencies": {
+    "@types/http-proxy": "^1.17.17",
     "@types/node": "^25.3.2",
+    "@types/ws": "^8.18.1",
     "typescript": "^5.9.0"
   },
   "openclaw": {
     "extensions": [
       "dist/index.js"
     ]
+  },
+  "dependencies": {
+    "dotenv": "^17.3.1",
+    "http-proxy": "^1.18.1",
+    "ws": "^8.19.0"
   }
 }

@@ -24,6 +24,7 @@ function canonicalizePath(raw: string): string {
 import { checkExecBlacklist, checkPathBlacklist, checkToolBlacklist } from "./src/blacklist.js";
 import { initLlm, singleVote, multiVote } from "./src/llm-voter.js";
 import { initAuditLog, writeAuditEntry } from "./src/audit-log.js";
+import { scanSensitiveData } from "./src/sensitive-scan.js";
 
 function loadEnabled(): boolean {
   try {
@@ -65,6 +66,11 @@ export default function setup(api: OpenClawPluginApi): void {
     if (!match) {
       // Check tool-level blacklist (covers all other tools like email, message, etc.)
       match = checkToolBlacklist(toolName, (params ?? {}) as Record<string, unknown>);
+    }
+
+    if (!match) {
+      // Check for sensitive data exposure
+      match = scanSensitiveData((params ?? {}) as Record<string, unknown>);
     }
 
     if (!match) return; // 99% of calls end here

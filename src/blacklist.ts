@@ -48,11 +48,26 @@ const CRITICAL_EXEC: Rule[] = [
   // find -exec with dangerous commands
   { pattern: /find\s+.*-exec\s+.*\brm\b/, reason: "find -exec rm (indirect deletion)" },
   { pattern: /find\s+.*-delete\b/, reason: "find -delete (bulk deletion)" },
+  // Reverse shells and bind shells
+  { pattern: /nc\s+-e\s+\/bin\/(?:ba)?sh/, reason: "netcat reverse shell" },
+  { pattern: /bash\s+-i\s+>\s?&?\s?\/dev\/tcp\//, reason: "bash reverse shell" },
+  { pattern: /python\s+-c\s+.*import socket.*pty\.spawn/, reason: "python reverse shell" },
+  { pattern: /\/dev\/tcp\/[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\/[0-9]+/, reason: "direct /dev/tcp connection" },
+  { pattern: /mkfifo\s+\/tmp\/[a-zA-Z0-9_-]+.*nc\s+/, reason: "named pipe reverse shell" },
+  // Container escapes
+  { pattern: /curl\s+--unix-socket\s+\/var\/run\/docker\.sock/, reason: "docker socket abuse" },
+  { pattern: /nsenter\s+--mount=.*--uts=.*--ipc=.*--net=.*--pid=/, reason: "nsenter container escape" },
+  // Account manipulation
+  { pattern: /usermod\s+-aG\s+(?:sudo|wheel|root|docker)\s+/, reason: "privilege escalation via group assignment" },
 ];
 
 const CRITICAL_PATH: Rule[] = [
   { pattern: /^\/etc\/(?:passwd|shadow|sudoers)$/, reason: "write to system auth file" },
   { pattern: /^\/boot\//, reason: "write to boot partition" },
+  { pattern: /^\/home\/[^\/]+\/\.ssh\/authorized_keys$/, reason: "SSH key backdoor" },
+  { pattern: /^\/home\/[^\/]+\/\.(bashrc|zshrc|profile|bash_profile)$/, reason: "shell profile backdoor" },
+  { pattern: /^\/root\/\.ssh\/authorized_keys$/, reason: "root SSH key backdoor" },
+  { pattern: /^\/var\/spool\/cron\//, reason: "cron backdoor" },
 ];
 
 // ── WARNING: risky but possibly intentional ────────────────────────
