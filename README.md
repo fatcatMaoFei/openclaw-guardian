@@ -20,24 +20,39 @@ The key insight: **99% of what an AI agent does is harmless** (reading files, fe
 ## How It Works
 
 ```
-AI Agent wants to run a tool (e.g., exec "rm -rf /tmp/data")
-                    ↓
-        ┌───────────────────────┐
-        │   Blacklist Matcher   │  ← Keyword rules, 0ms, no model call
-        │   critical / warning  │
-        └───────────┬───────────┘
-                    ↓
-    ┌───────────────┼───────────────┐
-    ↓               ↓               ↓
- No match        warning          critical
- (just go)     (1 LLM vote)    (3 LLM votes)
-    ↓               ↓               ↓
- Execute       1 vote check     3 parallel votes
-  0ms          ~1-2s            ~2-4s
-                    ↓               ↓
-              confirmed? →     ALL 3 confirmed?
-              yes: execute     yes: execute
-              no: block        no: block
+                          ┌──────────────────────────────────┐
+  Client (Browser,        │  Layer 1: Entry Protection       │
+  Telegram, Slack, etc.)  │  Guardian Proxy :18790           │
+          │               │  ✓ Token 校验 (?token=xxx)       │
+          │               │  ✓ Origin 校验 (localhost only)  │
+          │               │  ✓ Every attempt → audit log     │
+          ▼               └────────────┬─────────────────────┘
+    ws://localhost:18790               │ token OK
+    ?token=xxx                         ▼
+                          ┌──────────────────────────────────┐
+                          │  OpenClaw Gateway :18789         │
+                          │  (bind loopback, 不直接暴露)     │
+                          └────────────┬─────────────────────┘
+                                       │ tool call
+                                       ▼
+                          ┌──────────────────────────────────┐
+                          │  Layer 2: Execution Protection   │
+                          │  ✓ Blacklist regex (0ms)         │
+                          │  ✓ Sensitive data scan           │
+                          │  ✓ LLM intent verification      │
+                          └────────────┬─────────────────────┘
+                                       │
+                      ┌────────────────┼────────────────┐
+                      ↓                ↓                ↓
+                   No match         warning          critical
+                   (pass)        (1 LLM vote)     (3 LLM votes)
+                      ↓                ↓                ↓
+                   Execute       1 vote check    3 parallel votes
+                    0ms           ~1-2s            ~2-4s
+                                       ↓                ↓
+                                 confirmed? →    ALL 3 confirmed?
+                                 yes: execute    yes: execute
+                                 no: block       no: block
 ```
 
 ### Two-Tier Blacklist
@@ -113,31 +128,34 @@ Guardian doesn't just inspect `exec`, `write`, and `edit` — it also scans tool
 
 Everyday operations like `send`, `get`, `web_fetch`, `cron`, `snapshot`, etc. are completely unaffected — they never match any blacklist pattern.
 
-### Dual Protection Protocol (双重防护)
+### Triple Protection Protocol (三重防护)
 
-Guardian provides two layers of protection that work together:
+Guardian provides **three layers** of protection that work together:
 
-**Layer 1 — Guardian Plugin (automatic):** Regex pattern matching + LLM intent verification. When a dangerous operation is detected, Guardian blocks the tool call and returns a rejection message to the agent.
+**Layer 1 — Entry Protection (入口防护):** All clients must connect through the Guardian Proxy (port 18790) with a valid token. Malicious scripts, rogue webpages, or external attackers **cannot** directly reach the OpenClaw gateway on port 18789. This blocks the entire class of "ClawJacked" attacks where external JS silently connects to `ws://localhost:18789`.
 
-**Layer 2 — Agent Self-Discipline (behavioral):** When an agent receives a Guardian block notification, it **must immediately stop**, report the blocked command and reason to the human user, and **wait for explicit confirmation** before proceeding. The agent must not attempt to bypass, retry, or find alternative ways to execute the blocked operation.
+**Layer 2 — Execution Protection (执行防护):** Regex blacklist + sensitive data scanning + LLM intent verification. Every tool call is checked before execution. Dangerous operations are blocked and logged.
+
+**Layer 3 — Agent Self-Discipline (Agent 自律):** When an agent receives a Guardian block notification, it **must immediately stop**, report the blocked command and reason to the human user, and **wait for explicit confirmation** before proceeding.
 
 **The protection chain:**
 
 ```
-Tool call → Regex match → Guardian blocks → Agent stops → Reports to human → Human decides → Continue or abort
+Client → Token 校验 (Layer 1) → Gateway → Tool call → Regex + Scan (Layer 2) → LLM 投票 → Agent 停下 (Layer 3) → 人类确认
 ```
 
-This dual approach ensures that even if an agent is determined to perform a dangerous action, it cannot silently retry or work around the block. The human always stays in the loop for any operation Guardian considers risky.
+**Why forced entry protection?** Without it, any webpage you visit could silently open `ws://localhost:18789` and send commands to your AI agent. The proxy acts as a door guard — no token, no entry. It's like putting a lock on your front door instead of just hoping nobody walks in.
 
 #### Recommended AGENTS.md Rule
 
-To activate Layer 2, add this rule to your `AGENTS.md` (or equivalent agent instructions file):
+To activate Layer 3, add this rule to your `AGENTS.md` (or equivalent agent instructions file):
 
 ```markdown
-### Guardian 双重防护协议（硬规则）
-1. **第一层（Guardian 插件）**：regex 初筛 + LLM 意图确认，自动拦截危险操作
-2. **第二层（Agent 自觉）**：当 Guardian 拦截命令时，agent 收到拦截通知后**必须立刻停下**，向用户报告被拦截的命令和原因，等待确认后才能继续。禁止自行绕过、重试或换方式执行被拦截的操作。
-3. **防护链**：regex 初筛 → Guardian 拦截 → agent 停下 → 人类确认 → 继续/放弃
+### Guardian 三重防护协议（硬规则）
+1. **第一层（入口防护）**：所有连接必须通过 Guardian Proxy (18790) + token 校验，恶意 JS/外部攻击者无法直连 gateway
+2. **第二层（执行防护）**：regex 初筛 + 敏感数据扫描 + LLM 意图确认，自动拦截危险操作
+3. **第三层（Agent 自律）**：当 Guardian 拦截命令时，agent 收到拦截通知后**必须立刻停下**，向用户报告被拦截的命令和原因，等待确认后才能继续。禁止自行绕过、重试或换方式执行被拦截的操作。
+4. **防护链**：token 校验 → regex 初筛 → 敏感数据扫描 → LLM 投票 → Guardian 拦截 → agent 停下 → 人类确认 → 继续/放弃
 ```
 
 This ensures the agent treats Guardian blocks as hard stops rather than soft suggestions.
@@ -146,9 +164,9 @@ This ensures the agent treats Guardian blocks as hard stops rather than soft sug
 
 Guardian's blacklist uses **zero-cost keyword rules** — no model calls for pattern matching. Regex like `rm -rf /` → critical, `sudo` → warning is instant and deterministic. LLM verification is only triggered for the ~1% of operations that actually hit the blacklist, and its only job is confirming user intent — not scoring risk.
 
-## Quick Start (One Command)
+## Quick Start
 
-### 1. Clone into your OpenClaw workspace & Install Dependencies
+### Step 1: Clone & Install
 
 ```bash
 cd ~/.openclaw/workspace
@@ -157,42 +175,93 @@ cd openclaw-guardian
 npm install
 ```
 
-### 2. Start Guardian Proxy
+### Step 2: Register Plugin (执行防护)
 
-Use `npm run start` to start the standalone proxy layer alongside your plugin:
+Add to your `openclaw.json`:
+
+```json
+{
+  "plugins": {
+    "load": {
+      "paths": ["./openclaw-guardian"]
+    },
+    "entries": {
+      "openclaw-guardian": {
+        "enabled": true
+      }
+    }
+  }
+}
+```
+
+Then restart the gateway:
+
+```bash
+openclaw gateway restart
+```
+
+> This activates **Layer 2 (Execution Protection)** — blacklist + sensitive data scan + LLM voting on every tool call.
+
+### Step 3: Start Guardian Proxy (入口防护)
 
 ```bash
 npm run start
 ```
-*Observe the console output closely. It will generate a token for you.*
 
-### 3. Update Client Connections
+Console output will display:
 
-**All clients (Browsers, WebChats, Telegram webhooks, Slack apps) must now use the Guardian proxy port `18790` and supply the token.**
+```
+======================================================
+🛡️  openclaw-guardian: Entry Protection is ONLINE 🛡️
+======================================================
 
-Example WebChat or native app config:
-* Direct WebSocket: `ws://localhost:18790?token=YOUR_TOKEN`
+All clients MUST connect to the proxy port: ws://localhost:18790
+Access Token: a1b2c3d4e5f6...your_32_char_token...
 
-Example Telegram webhook:
-* Webhook URL: `http://localhost:18790/your-webhook-path?token=YOUR_TOKEN`
+Example WebSocket connection:
+  wscat -c ws://localhost:18790?token=a1b2c3d4...
 
-> **Note:** Do NOT connect directly to the OpenClaw gateway port 18789 anymore. The goal of this plugin is to intercept and validate all entry traffic.
+Example HTTP webhook:
+  http://localhost:18790/your-path?token=a1b2c3d4...
 
-That's it. Guardian is now active. Every connection goes through token validation, and every tool call goes through blacklist checking automatically.
-
-## Customization
-
-### Enable / Disable
-
-Edit `default-policies.json`:
-
-```json
-{
-  "enabled": true
-}
+Do NOT connect directly to the gateway port 18789.
+======================================================
 ```
 
-Set to `false` to disable Guardian entirely without uninstalling.
+> This activates **Layer 1 (Entry Protection)** — all connections must carry a valid token.
+
+### Step 4: Update All Client Connections
+
+**All clients must now use the Guardian proxy port `18790` and supply the token:**
+
+| Client Type | Before | After |
+|-------------|--------|-------|
+| WebSocket | `ws://localhost:18789` | `ws://localhost:18790?token=YOUR_TOKEN` |
+| HTTP webhook | `http://localhost:18789/path` | `http://localhost:18790/path?token=YOUR_TOKEN` |
+| Telegram | webhook → `:18789/tg` | webhook → `:18790/tg?token=YOUR_TOKEN` |
+| Slack | webhook → `:18789/slack` | webhook → `:18790/slack?token=YOUR_TOKEN` |
+
+Alternatively, pass the token in the HTTP header:
+```
+Authorization: Bearer YOUR_TOKEN
+```
+
+> [!CAUTION]
+> **Do NOT connect directly to port 18789.** The entire point of this plugin is that all traffic must pass through the proxy's token validation layer.
+
+### Step 5: Verify It Works
+
+```bash
+# Should FAIL (no token):
+wscat -c ws://localhost:18790
+# → Connection rejected: 401 Unauthorized
+
+# Should SUCCEED (with token):
+wscat -c "ws://localhost:18790?token=YOUR_TOKEN"
+# → Connected to OpenClaw gateway
+```
+
+## Customization
 
 ### Blacklist Rules
 
@@ -222,11 +291,23 @@ No extra configuration needed.
 
 ## Audit Trail
 
-Every blacklist-matched operation is logged to `~/.openclaw/guardian-audit.jsonl` with SHA-256 hash chaining:
+All events are logged to `~/.openclaw/guardian-audit.jsonl`. There are two types of log entries:
 
+**Proxy connection log (Layer 1):**
 ```json
 {
-  "timestamp": "2026-02-24T09:30:00.000Z",
+  "timestamp": "2026-03-05T09:30:00.000Z",
+  "event": "PROXY_CONNECTION",
+  "ip": "::1",
+  "status": "REJECTED",
+  "reason": "Missing token"
+}
+```
+
+**Tool call interception log (Layer 2, with SHA-256 hash chain):**
+```json
+{
+  "timestamp": "2026-03-05T09:30:00.000Z",
   "toolName": "exec",
   "blacklistLevel": "critical",
   "blacklistReason": "rm -rf on root-level system path",
@@ -238,30 +319,61 @@ Every blacklist-matched operation is logged to `~/.openclaw/guardian-audit.jsonl
 }
 ```
 
-Tamper-evident: each entry's hash includes the previous entry's hash. Break one link and the whole chain fails verification.
+Tamper-evident: each tool call entry's hash includes the previous entry's hash. Break one link and the whole chain fails verification.
+
+## Configuration
+
+### Environment Variables (`.env`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PROXY_PORT` | `18790` | Port for the Guardian Proxy |
+| `GUARDIAN_TOKEN` | (auto-generated) | Token for client authentication. If not set, auto-generates a 32-char hex token and saves to `~/.openclaw/.guardian_token` |
+
+Create a `.env` file in the project root to customize:
+
+```env
+PROXY_PORT=18790
+GUARDIAN_TOKEN=your_custom_token_here
+```
+
+### Enable / Disable Execution Protection
+
+Edit `default-policies.json`:
+
+```json
+{
+  "enabled": true
+}
+```
+
+Set to `false` to disable Guardian's execution protection (blacklist + LLM) entirely without uninstalling. The proxy (entry protection) runs independently.
 
 ## Architecture
 
 ```
 openclaw-guardian/
 ├── openclaw.plugin.json    # Plugin manifest (v2.0.0)
-├── index.ts                # Entry — registers before_tool_call hook, routes blacklist hits to LLM
+├── index.ts                # Plugin entry — before_tool_call hook + sensitive scan
 ├── src/
-│   ├── blacklist.ts        # Two-tier keyword rules (critical/warning), 0ms, no model calls
+│   ├── proxy-server.ts     # 🆕 Entry protection — token-gated reverse proxy (:18790 → :18789)
+│   ├── start.ts            # 🆕 Standalone entry point (npm run start)
+│   ├── sensitive-scan.ts   # 🆕 Regex scanner for API keys, tokens, passwords in tool params
+│   ├── blacklist.ts        # Two-tier keyword rules (critical/warning) + reverse shells, container escapes
 │   ├── llm-voter.ts        # LLM intent verification (single vote or 3-vote unanimous)
-│   └── audit-log.ts        # SHA-256 hash-chain audit logger
-├── default-policies.json   # Enable/disable toggle
+│   └── audit-log.ts        # SHA-256 hash-chain audit logger + proxy connection logger
+├── default-policies.json   # Enable/disable execution protection toggle
 ├── package.json
 └── tsconfig.json
 ```
 
 ### How It Hooks Into OpenClaw
 
-OpenClaw's agent loop: `Model → tool_call → Tool Executor → result → Model`
+**Entry Protection (proxy-server.ts):** Runs as a standalone HTTP/WebSocket reverse proxy. Listens on port 18790, validates token + Origin on every connection, and forwards valid traffic to the OpenClaw gateway on port 18789.
 
-Guardian registers a `before_tool_call` plugin hook. This hook fires **after** the model decides to call a tool but **before** the tool actually executes. If Guardian returns `{ block: true }`, the tool is stopped and the model receives a rejection message instead.
+**Execution Protection (index.ts):** Registers a `before_tool_call` plugin hook in OpenClaw's agent loop (`Model → tool_call → Tool Executor → result → Model`). This hook fires **after** the model decides to call a tool but **before** the tool actually executes. If Guardian returns `{ block: true }`, the tool is stopped and the model receives a rejection message.
 
-This is the same hook interface OpenClaw uses internally for loop detection — battle-tested, async-safe, and zero modifications to core code.
+The two layers are independent — the proxy runs as a separate process, while the plugin runs inside OpenClaw. Both write to the same audit log at `~/.openclaw/guardian-audit.jsonl`.
 
 ## Token Cost
 
