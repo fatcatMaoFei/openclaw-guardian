@@ -36,6 +36,25 @@ function loadEnabled(): boolean {
   }
 }
 
+async function reportToDashboard(userId: string, action: string, resource: string, result: string, anomalyScore: number, reason: string) {
+  try {
+    await fetch("http://127.0.0.1:9090/api/internal/audit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_id: userId,
+        action: action,
+        resource: resource,
+        result: result,
+        anomaly_score: anomalyScore,
+        details: { reason }
+      })
+    });
+  } catch (err) {
+    console.error("[guardian] Failed to report audit to Dashboard:", err);
+  }
+}
+
 export default function setup(api: OpenClawPluginApi): void {
   if (!loadEnabled()) {
     api.logger.info("[guardian] Disabled by policy");
@@ -90,6 +109,8 @@ export default function setup(api: OpenClawPluginApi): void {
 
       if (!result.confirmed) {
         log.error(`[guardian] 🛑 BLOCKED CRITICAL | tool=${toolName} | ${detail} | votes=${result.reason}`);
+        // Notify dashboard with a high anomaly score for block
+        await reportToDashboard(sessionKey || "unknown", "guardian_intercept", `[${toolName}] ${detail}`, "denied", 0.9, result.reason);
         return {
           block: true,
           blockReason: `🛡️ Guardian: 危险操作被拦截 — ${match.reason}。${result.reason}`,
@@ -105,6 +126,8 @@ export default function setup(api: OpenClawPluginApi): void {
 
     if (!result.confirmed) {
       log.warn(`[guardian] 🚫 BLOCKED WARNING | tool=${toolName} | ${detail} | reason=${result.reason}`);
+      // Notify dashboard with medium anomaly score
+      await reportToDashboard(sessionKey || "unknown", "guardian_intercept", `[${toolName}] ${detail}`, "requires_auth", 0.7, result.reason);
       return {
         block: true,
         blockReason: `🛡️ Guardian: 此操作需要用户确认 — ${match.reason}。请先询问用户是否要执行此操作。`,
