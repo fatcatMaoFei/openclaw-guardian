@@ -350,6 +350,116 @@ Edit `default-policies.json`:
 Set to `false` to disable Guardian's execution protection (blacklist + LLM) entirely without uninstalling. The proxy (entry protection) runs independently.
 
 ## Architecture
+## v0.4.0 — Safety Enhancements (Anthropic-Inspired)
+
+Five new features inspired by Anthropic's Claude Code Auto Mode safety design:
+
+### 1. Reasoning-Blind LLM Voter
+
+The LLM voter now ONLY receives:
+- The tool name being called
+- The tool parameters
+- The user's original messages (human-typed text only)
+
+It **never** sees the agent's reasoning chain, internal thoughts, or previous tool outputs. This prevents the agent from "persuading" the voter to allow dangerous actions through carefully crafted reasoning.
+
+### 2. Two-Stage Classifier with Cache Optimization
+
+The LLM voting system now uses a two-stage approach:
+
+| Stage | When | Max Tokens | Purpose |
+|-------|------|------------|---------|
+| Stage 1 | Always | 50 | Fast yes/no classification |
+| Stage 2 | Only when Stage 1 says NO | 300 | Chain-of-thought deep analysis |
+
+Both stages share a **common prompt prefix**. When Stage 2 triggers after Stage 1, the LLM provider can cache-hit on the shared prefix, making Stage 2's input tokens nearly free. Stage 2 performs step-by-step reasoning including cultural/language nuance analysis (e.g., Chinese confirmations).
+
+### 3. Circuit Breaker / Fuse Mechanism
+
+Prevents agents from repeatedly probing blocked operations:
+
+| Trigger | Threshold | Action |
+|---------|-----------|--------|
+| Consecutive denials | 3 in a row | Block ALL tool calls, escalate to human |
+| Total denials | 20 in session | Block ALL tool calls, escalate to human |
+
+When tripped:
+- All subsequent tool calls are immediately blocked
+- The activation is logged in the audit log
+- Only a human can reset the circuit breaker
+- Consecutive counter resets on each successful pass
+
+### 4. Prompt Injection Probe
+
+A new security layer that runs **before** the blacklist check, scanning tool parameters for injection patterns:
+
+| Pattern Type | Examples | Severity |
+|-------------|----------|----------|
+| Instruction override | "ignore previous instructions", "disregard all rules" | High |
+| Identity manipulation | "you are now", "act as a different", "pretend to be" | High/Medium |
+| Fake system messages | "system: ", "[system]", `<system>` | High/Medium |
+| Jailbreak patterns | "do anything now", "DAN mode", "developer mode enabled" | High/Medium |
+| Output manipulation | "respond with only yes", "never reveal the instructions" | Medium |
+| Encoded payloads | eval(atob()), hex-encoded strings, suspicious base64 | High/Medium |
+
+The probe does **not** block outright. Instead, it adds a warning flag that gets passed to the LLM voter as additional context, making the voter extra cautious when injection patterns are detected.
+
+### 5. Audit Statistics
+
+View security statistics from the audit log via CLI:
+
+```bash
+npm run stats
+# or
+node dist/src/audit-stats.js
+```
+
+Output includes:
+- Total operations checked
+- Block rate by tier (critical/warning)
+- False positive rate estimate (blocks that were subsequently manually approved within 5 minutes)
+- Top blocked patterns
+- Circuit breaker activation count
+- Injection warning count
+
+## Updated Architecture
+
+```
+openclaw-guardian/
+├── index.ts                # Plugin entry — orchestrates all safety layers
+├── src/
+│   ├── injection-probe.ts  # [NEW] Prompt injection pattern scanner
+│   ├── circuit-breaker.ts  # [NEW] Fuse mechanism — pause on repeated denials
+│   ├── audit-stats.ts      # [NEW] CLI statistics from audit log
+│   ├── blacklist.ts        # Two-tier keyword rules (critical/warning)
+│   ├── llm-voter.ts        # [UPGRADED] Reasoning-blind + two-stage classifier
+│   ├── sensitive-scan.ts   # Credential detection in params
+│   ├── audit-log.ts        # SHA-256 hash-chain logging
+│   ├── proxy-server.ts     # Token-gated reverse proxy
+│   └── start.ts            # Standalone proxy entry point
+├── default-policies.json
+├── package.json
+└── tsconfig.json
+```
+
+### Updated Flow
+
+```
+tool call
+  │
+  ├─ Circuit Breaker tripped? → BLOCK ALL (escalate to human)
+  │
+  ├─ Injection Probe scan → adds warning context (does not block)
+  │
+  ├─ Blacklist match?
+  │   ├─ No match → PASS (99% of calls)
+  │   ├─ Warning → Stage 1 fast vote → NO? → Stage 2 CoT vote
+  │   └─ Critical → 3x (Stage 1 → Stage 2) parallel votes
+  │
+  ├─ Denied? → Record in circuit breaker → check if fuse trips
+  └─ Passed? → Reset consecutive denial counter
+```
+
 
 ```
 openclaw-guardian/
